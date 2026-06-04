@@ -405,7 +405,7 @@ void furi_hal_infrared_async_tx_start(uint32_t freq, float duty_cycle) {
         .frequency_hz = freq,
         .duty_cycle = duty_cycle,
         .flags = {
-            .polarity_active_low = false,
+            .polarity_active_low = true,
             .always_on = false, /* Only modulate during mark (level=1) */
         },
     };
