@@ -19,6 +19,7 @@
 #include <driver/ledc.h>
 #include <driver/gpio.h>
 #include <esp_log.h>
+#include <driver/i2c.h>
 
 #ifdef BOARD_PIN_WS2812_DATA
 #include <led_strip.h>
@@ -29,6 +30,7 @@
 #define BACKLIGHT_LEDC_SPEED    LEDC_LOW_SPEED_MODE
 #define BACKLIGHT_LEDC_FREQ     8000
 #define BACKLIGHT_LEDC_DUTY_RES LEDC_TIMER_8_BIT
+#define AW9523_ADDR         0x5B
 
 static const char* TAG = "FuriHalLight";
 
@@ -92,6 +94,56 @@ void furi_hal_light_init(void) {
      * latches this pin LOW with gpio_hold so the backlight stays off in deep
      * sleep; the latch survives the deep-sleep wake reset, so we must clear it
      * here before LEDC can drive the pin again. No-op on a cold boot. */
+        // --- ХАК ДЛЯ ПОДАЧИ ПИТАНИЯ VIN НА СВЕТОДИОДЫ SMOOCHIE V2 ---
+    
+    // 1. Программный сброс расширителя портов AW9523B
+    i2c_cmd_handle_t aw_cmd = i2c_cmd_link_create();
+    i2c_master_start(aw_cmd);
+    i2c_master_write_byte(aw_cmd, (AW9523_ADDR << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(aw_cmd, 0x7F, true); // Регистр RESET
+    i2c_master_write_byte(aw_cmd, 0x00, true); 
+    i2c_master_stop(aw_cmd);
+    i2c_master_cmd_begin(I2C_NUM_0, aw_cmd, pdMS_TO_TICKS(10));
+    i2c_cmd_link_delete(aw_cmd);
+
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    // 2. Настраиваем ВСЕ порты P0 и P1 в режим обычного GPIO (а не ШИМ)
+    aw_cmd = i2c_cmd_link_create();
+    i2c_master_start(aw_cmd);
+    i2c_master_write_byte(aw_cmd, (AW9523_ADDR << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(aw_cmd, 0x12, true); // Начиная с регистра LED_MODE_P0
+    i2c_master_write_byte(aw_cmd, 0xFF, true); // 0xFF = режим GPIO для P0
+    i2c_master_write_byte(aw_cmd, 0xFF, true); // 0xFF = режим GPIO для P1
+    i2c_master_stop(aw_cmd);
+    i2c_master_cmd_begin(I2C_NUM_0, aw_cmd, pdMS_TO_TICKS(10));
+    i2c_cmd_link_delete(aw_cmd);
+
+    // 3. Настраиваем ВСЕ пины P0 и P1 на ВЫХОД (Output)
+    aw_cmd = i2c_cmd_link_create();
+    i2c_master_start(aw_cmd);
+    i2c_master_write_byte(aw_cmd, (AW9523_ADDR << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(aw_cmd, 0x04, true); // Регистр CONFIG_P0 (направление)
+    i2c_master_write_byte(aw_cmd, 0x00, true); // 0x00 = Output для всех пинов P0
+    i2c_master_write_byte(aw_cmd, 0x00, true); // 0x00 = Output для всех пинов P1
+    i2c_master_stop(aw_cmd);
+    i2c_master_cmd_begin(I2C_NUM_0, aw_cmd, pdMS_TO_TICKS(10));
+    i2c_cmd_link_delete(aw_cmd);
+
+    // 4. Подаем логическую единицу (высокий уровень) на ВСЕ пины P0 и P1, чтобы открыть ключ VIN
+    aw_cmd = i2c_cmd_link_create();
+    i2c_master_start(aw_cmd);
+    i2c_master_write_byte(aw_cmd, (AW9523_ADDR << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(aw_cmd, 0x02, true); // Регистр OUTPUT_P0 (состояние)
+    i2c_master_write_byte(aw_cmd, 0xFF, true); // Высокий уровень на все пины P0
+    i2c_master_write_byte(aw_cmd, 0xFF, true); // Высокий уровень на все пины P1
+    i2c_master_stop(aw_cmd);
+    i2c_master_cmd_begin(I2C_NUM_0, aw_cmd, pdMS_TO_TICKS(10));
+    i2c_cmd_link_delete(aw_cmd);
+
+    vTaskDelay(pdMS_TO_TICKS(10)); // Даем питанию на линии VIN стабилизироваться
+    // ------------------------------------------------------------------
+
     gpio_hold_dis((gpio_num_t)gpio_lcd_bl.pin);
 
     /* Configure LEDC timer for backlight PWM */
