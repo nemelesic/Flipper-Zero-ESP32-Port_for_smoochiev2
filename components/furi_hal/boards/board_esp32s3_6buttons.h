@@ -1,152 +1,125 @@
-/**
- * @file board.h
- * Board definition: Custom ESP32-S3 ILI9341 6-Button Board
- *
- * MCU:      ESP32-S3
- * Display:  ILI9341 240x320 RGB565 via SPI
- * Input:    6 discrete buttons
- * SubGHz:   CC1101 via SPI
- * NFC:      PN532 via I2C
- * SD Card:  SPI
- * IR:       TX + RX
- * RGB LED:  WS2812 x1 (IO48)
- */
+#ifndef Pins_Arduino_h
+#define Pins_Arduino_h
 
-#pragma once
+#include "soc/soc_caps.h"
+#include <stdint.h>
 
-/* ---- Board metadata ---- */
-#define BOARD_NAME        "esp32s3_6buttons"
-#define BOARD_TARGET      "esp32s3"
+static const uint8_t TX = 1;
+static const uint8_t RX = 2;
 
-/* ---- Hardware Button Pins ---- */
-#define BOARD_PIN_BTN_UP        41
-#define BOARD_PIN_BTN_DOWN      40
-#define BOARD_PIN_BTN_LEFT      38
-#define BOARD_PIN_BTN_RIGHT     39
-#define BOARD_PIN_BTN_OK        0
-#define BOARD_PIN_BTN_BACK      4
-#define BOARD_PIN_BUTTON_BOOT   0  
-#define BOARD_PIN_BATTERY_ADC   2
+static const uint8_t SDA = 47;
+static const uint8_t SCL = 48;
 
-/* ---- LCD Pins (ILI9341 via SPI) ---- */
-#define BOARD_PIN_LCD_MOSI      17
-#define BOARD_PIN_LCD_SCLK      18
-#define BOARD_PIN_LCD_DC        15
-#define BOARD_PIN_LCD_CS        7
-#define BOARD_PIN_LCD_RST       16
-#define BOARD_PIN_LCD_BL        6
+// Modified elsewhere
+static const uint8_t SS = 3;
+static const uint8_t MOSI = 17;
+static const uint8_t MISO = 8;
+static const uint8_t SCK = 18;
 
-/* ---- LCD Display Configuration ---- */
-#define BOARD_LCD_H_RES         320     /* Native width after swap_xy */
-#define BOARD_LCD_V_RES         240     /* Native height after swap_xy */
-#define BOARD_LCD_SPI_HOST      SPI2_HOST
-#define BOARD_LCD_SPI_FREQ_HZ   (20 * 1000 * 1000)
-#define BOARD_LCD_CMD_BITS      8
-#define BOARD_LCD_PARAM_BITS    8
-#define BOARD_LCD_SWAP_XY       true
-#define BOARD_LCD_MIRROR_X      false
-#define BOARD_LCD_MIRROR_Y      false
-#define BOARD_LCD_INVERT_COLOR  false   /* ILI9341 does not need inversion */
-#define BOARD_LCD_GAP_X         0
-#define BOARD_LCD_GAP_Y         0
-#define BOARD_LCD_BL_ACTIVE_LOW false
-#define BOARD_LCD_COLOR_ORDER_BGR true
+#define SERIAL_RX 2
+#define SERIAL_TX 1
+#define BAD_RX SERIAL_RX
+#define BAD_TX SERIAL_TX
+#define GPS_SERIAL_TX SERIAL_TX
+#define GPS_SERIAL_RX SERIAL_RX
+#define USB_as_HID 1
 
-/* Flipper framebuffer → display color mapping (RGB565) */
-#define BOARD_LCD_FG_COLOR      0xA0FD
-#define BOARD_LCD_BG_COLOR      0x0000  /* Black */
+#define BTN_ALIAS "\"OK\""
+#define HAS_5_BUTTONS
+#define SEL_BTN 0
+#define UP_BTN 41
+#define DW_BTN 40
+#define R_BTN 38
+#define L_BTN 39
+#define BTN_ACT LOW
 
-/* ---- SD Card Pins ---- */
-#define BOARD_PIN_SD_CS         3
-#define BOARD_PIN_SD_MISO       8
-#define BOARD_PIN_SD_MOSI       17
-#define BOARD_PIN_SD_SCLK       18
+#define RXLED 4
+#define TXLED 5
+#define LED_ON HIGH
+#define LED_OFF LOW
 
-/* ---- Touch Controller — NOT PRESENT ---- */
-#define BOARD_PIN_TOUCH_SCL     UINT16_MAX
-#define BOARD_PIN_TOUCH_SDA     UINT16_MAX
-#define BOARD_PIN_TOUCH_RST     UINT16_MAX
-#define BOARD_PIN_TOUCH_INT     UINT16_MAX
-#define BOARD_TOUCH_I2C_ADDR    0x00
-#define BOARD_TOUCH_I2C_PORT    I2C_NUM_0
-#define BOARD_TOUCH_I2C_FREQ_HZ 0
-#define BOARD_TOUCH_I2C_TIMEOUT 0
+#define USE_CC1101_VIA_SPI
+#define CC1101_GDO0_PIN 9
+#define CC1101_GDO2_PIN 10
+#define CC1101_SS_PIN 46
+#define CC1101_MOSI_PIN SPI_MOSI_PIN
+#define CC1101_SCK_PIN SPI_SCK_PIN
+#define CC1101_MISO_PIN SPI_MISO_PIN
 
-/* ---- SubGHz / CC1101 ---- */
-#define BOARD_PIN_CC1101_SCK    13
-#define BOARD_PIN_CC1101_CSN    46
-#define BOARD_PIN_CC1101_MISO   11
-#define BOARD_PIN_CC1101_MOSI   12
-#define BOARD_PIN_CC1101_GDO0   9
-#define BOARD_PIN_CC1101_GDO2   10
-#define BOARD_CC1101_SPI_HOST   SPI3_HOST
-#define BOARD_CC1101_SPI_SHARED 0
+#define USE_NRF24_VIA_SPI
+#define NRF24_CE_PIN 21
+#define NRF24_SS_PIN 14
+#define NRF24_MOSI_PIN SPI_MOSI_PIN
+#define NRF24_SCK_PIN SPI_SCK_PIN
+#define NRF24_MISO_PIN SPI_MISO_PIN
 
+#define FP 1
+#define FM 2
+#define FG 3
 
-/* ---- NRF24L01 ---- */
-#define BOARD_PIN_NRF24_SCK     13
-#define BOARD_PIN_NRF24_MISO    11
-#define BOARD_PIN_NRF24_MOSI    12
-#define BOARD_PIN_NRF24_CSN     14
-#define BOARD_PIN_NRF24_CE      21
-#define BOARD_HAS_NRF24         1
+#define HAS_SCREEN 1
+#define ROTATION 1
+#define MINBRIGHT (uint8_t)1
 
-/* ---- Power Enable ---- */
-//#define BOARD_PIN_PWR_EN        5
+#define USER_SETUP_LOADED 1
+#define ST7789_DRIVER 1
+#define TFT_RGB_ORDER 0
+#define TFT_WIDTH 170
+#define TFT_HEIGHT 320
+#define TFT_BACKLIGHT_ON 1
+#define TFT_BL 6
+#define TFT_RST 16
+#define TFT_DC 15
+#define TFT_MISO 8
+#define TFT_MOSI 17
+#define TFT_SCLK 18
+#define TFT_CS 7
+#define TOUCH_CS -1 // SDCARD_CS to make sure SDCard works
+#define SMOOTH_FONT 1
+#define SPI_FREQUENCY 20000000
+#define SPI_READ_FREQUENCY 20000000
+#define SPI_TOUCH_FREQUENCY 2500000
 
-/* ---- IR ---- */
-#define BOARD_PIN_IR_TX         5  
-#define BOARD_PIN_IR_RX         UINT16_MAX  
+#define SDCARD_CS 3
+#define SDCARD_SCK 18
+#define SDCARD_MISO 8
+#define SDCARD_MOSI 17
 
-/* ---- NFC / PN532 (via I2C) ---- */
-#define BOARD_PIN_NFC_SCL       42
-#define BOARD_PIN_NFC_SDA       47
-#define BOARD_PIN_NFC_IRQ       UINT16_MAX
-#define BOARD_PIN_NFC_RST       UINT16_MAX
-#define BOARD_NFC_I2C_PORT      I2C_NUM_0
+#define GROVE_SDA 47
+#define GROVE_SCL 48
 
-/* ---- Speaker (I2S) ---- */
-#define BOARD_PIN_SPEAKER_BCLK  UINT16_MAX
-#define BOARD_PIN_SPEAKER_WCLK  UINT16_MAX
-#define BOARD_PIN_SPEAKER_DOUT  UINT16_MAX
+#define SPI_SCK_PIN 13
+#define SPI_MOSI_PIN 12
+#define SPI_MISO_PIN 11
+#define SPI_SS_PIN 43
 
-/* ---- WS2812 RGB LED ---- */
-#define BOARD_PIN_WS2812_DATA   48
-#define BOARD_WS2812_LED_COUNT  1
+// RGB LED
 
-/* ---- Microphone ---- */
-#define BOARD_PIN_MIC_DATA      UINT16_MAX
-#define BOARD_PIN_MIC_CLK       UINT16_MAX
+#define HAS_RGB_LED 1
+#define RGB_LED 45
+#define LED_TYPE WS2812B
+#define LED_ORDER GRB
+#define LED_TYPE_IS_RGBW 0
+#define LED_COUNT 16
 
-/* ---- Qwiic / External I2C ---- */
-#define BOARD_PIN_QWIIC_SDA     47
-#define BOARD_PIN_QWIIC_SCL     42
+#define LED_COLOR_STEP 15
 
-/* ---- Features ---- */
-#define BOARD_HAS_TOUCH         0
-#define BOARD_HAS_ENCODER       0
-#define BOARD_HAS_SD_CARD       1
-#define BOARD_HAS_BLE           1
-#define BOARD_HAS_RGB_LED       1
-#define BOARD_HAS_VIBRO         0
-#define BOARD_HAS_SPEAKER       0
-#define BOARD_HAS_IR            1
-#define BOARD_HAS_IBUTTON       0
-#define BOARD_HAS_RFID          0
-#define BOARD_HAS_NFC           1
-#define BOARD_HAS_SUBGHZ        1
-#define BOARD_HAS_MIC           0
+#define XPOWERS_CHIP_BQ25896
 
-/* ---- RFID ---- */
-#define BOARD_PIN_RFID_RX       44
-#define BOARD_PIN_RFID_TX       43
-#define BOARD_RFID_UART_NUM     1
+// USE BOOST ENABLE PMIC 5V OUTPUT
+#define USE_BOOST
 
-/* ---- Battery ---- */
-#define BQ27220_ADDR            0x55
-#define BQ_I2C_PORT             I2C_NUM_0
-#define BQ_I2C_SDA              BOARD_PIN_QWIIC_SDA
-#define BQ_I2C_SCL              BOARD_PIN_QWIIC_SCL
-#define HIGH_DRAIN_CURRENT_THRESHOLD (-200)
-#define FURI_HAL_POWER_VIRTUAL_CAPACITY_MAH     (1300U)
-#define BQ25896_CHARGE_LIMIT    1280
+// Mic#
+#define PIN_CLK 1
+#define PIN_DATA 10
+#define PIN_WS 2
+
+// IO EXPANDER
+#define USE_IO_EXPANDER
+#define IO_EXPANDER_AW9523
+#define IO_EXP_GPS 13
+#define IO_EXP_MIC 4
+#define IO_EXP_VIBRO 2
+#define IO_EXP_CC_RX 7
+#define IO_EXP_CC_TX 12
+#endif /* Pins_Arduino_h */
