@@ -3,7 +3,7 @@
 
 This fork made for smoochiev2 original board, you can you this fw with diy version too
 Were changed:
-furi_hal_infrared.c a little bit, furi_hal_speaker.c fully, board_esp32s3_6buttons.h now it is a target for smoochiev2, target_input.c added left + right combo
+furi_hal_infrared.c a little bit, furi_hal_speaker.c fully, board_esp32s3_6buttons.h now it is a target for smoochiev2, target_input.c added left + right combo for back button, furi_hal_light.c to add aw9523B support
 
 
 
