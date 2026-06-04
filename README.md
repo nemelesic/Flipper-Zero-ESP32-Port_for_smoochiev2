@@ -1,6 +1,14 @@
 > WARNING: I do not take responsibility if you damage your board or property. This guide is for educational purposes only — proceed at your own risk.
 
 
+This fork made for smoochiev2 original board, you can you this fw with diy version too
+Were changed:
+> furi_hal_infrared.c a little bit
+> furi_hal_speaker.c fully
+> board_esp32s3_6buttons.h now it is a target for smoochiev2
+
+
+
 This port of Sor3nts diy flipper repo is fully complete and ready to be built, using a esp32 s3, a 2.8 ili9341 tft and 6 button user interface. The correct pinout can be found in the boards.h file under furi hal. I have not chnaged the core fucntionality, i simply modified it for a diy device as opposed to the base repo which is set for a lillygo device. 
 
 I will keep the repo sycned weekly and working/ up to date.
@@ -17,13 +25,13 @@ THE BASE BRANCH IS SETUP FOR A ILI9341, 2.8 OR 2.4, IF THAT IS YOUR SCREEN JUST 
 |-------------|------|
 | Up          | 41   |
 | Down        | 40   |
-| Left        | 38   |
-| Right       | 39   |
+| Left        | 39   |
+| Right       | 38   |
 | OK / Boot   | 0    |
-| Back        | 4    |
+| Back        | 1    |
 | Battery ADC | 2    | use with dual 100kohm resistors to ground and battery positive, pin goes in the middle
 
-## ILI9341
+## ST7789
 | Signal | GPIO | Notes                  |
 |--------|------|------------------------|
 | MOSI   | 17   |                        |
@@ -65,7 +73,7 @@ THE BASE BRANCH IS SETUP FOR A ILI9341, 2.8 OR 2.4, IF THAT IS YOUR SCREEN JUST 
 ## PN532 NFC (I2C_NUM_0)
 | Signal | GPIO |
 |--------|------|
-| SCL    | 42   |
+| SCL    | 48   |
 | SDA    | 47   |
 
 
@@ -73,8 +81,8 @@ THE BASE BRANCH IS SETUP FOR A ILI9341, 2.8 OR 2.4, IF THAT IS YOUR SCREEN JUST 
 | Signal | GPIO |
 |--------|------|
 | TX     | 5    |
-
+| RX     | 4    |
 ## WS2812 RGB LED
-| Signal | GPIO | Notes  |
-|--------|------|--------|
-| Data   | 48   | 1 LED  |
+| Signal | GPIO | Notes   |
+|--------|------|---------|
+| Data   | 48   | 16 LED  |
