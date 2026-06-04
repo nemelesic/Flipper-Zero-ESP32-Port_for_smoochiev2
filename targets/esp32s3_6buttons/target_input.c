@@ -62,10 +62,39 @@ static void input_emit_short(FuriPubSub* pubsub, InputKey key, uint32_t sequence
     input_publish(pubsub, key, InputTypeRelease, sequence);
 }
 
+//static bool button_is_pressed(ButtonState* btn) {
+    //int level = gpio_get_level(btn->gpio);
+    //return btn->inverted ? (level == 0) : (level != 0);
+//}
 static bool button_is_pressed(ButtonState* btn) {
+    /* 1. Считываем реальное состояние текущей проверяемой кнопки */
     int level = gpio_get_level(btn->gpio);
-    return btn->inverted ? (level == 0) : (level != 0);
+    bool real_pressed = btn->inverted ? (level == 0) : (level != 0);
+
+    /* 2. Опрашиваем пины LEFT и RIGHT напрямую для проверки комбинации */
+    int left_level  = gpio_get_level(BOARD_PIN_BTN_LEFT);
+    int right_level = gpio_get_level(BOARD_PIN_BTN_RIGHT);
+    
+    // Так как на Smoochie кнопки active-low, level == 0 означает физическое нажатие
+    bool physical_left_held  = (left_level == 0);
+    bool physical_right_held = (right_level == 0);
+
+    /* 3. Если зажаты одновременно LEFT и RIGHT */
+    if (physical_left_held && physical_right_held) {
+        // Если прошивка опрашивает кнопку BACK, говорим ей, что она НАЖАТА
+        if (btn->short_key == InputKeyBack) {
+            return true;
+        }
+        // Блокируем срабатывание одиночных LEFT и RIGHT, чтобы меню не дергалось
+        if (btn->short_key == InputKeyLeft || btn->short_key == InputKeyRight) {
+            return false;
+        }
+    }
+
+    /* 4. Во всех остальных случаях возвращаем обычное физическое состояние кнопки */
+    return real_pressed;
 }
+
 
 static void button_init_gpio(gpio_num_t pin, bool pull_up) {
     gpio_config_t cfg = {
