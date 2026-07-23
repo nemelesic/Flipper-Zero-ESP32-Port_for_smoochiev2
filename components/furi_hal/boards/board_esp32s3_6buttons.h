@@ -101,8 +101,8 @@
 /* ---- NFC / PN532 (via I2C) ---- */
 #define BOARD_PIN_NFC_SCL       48
 #define BOARD_PIN_NFC_SDA       47
-#define BOARD_PIN_NFC_IRQ       UINT16_MAX
-#define BOARD_PIN_NFC_RST       UINT16_MAX
+//#define BOARD_PIN_NFC_IRQ       UINT16_MAX attempted fix
+//#define BOARD_PIN_NFC_RST       UINT16_MAX attempted fix
 #define BOARD_NFC_I2C_PORT      I2C_NUM_0
 
 /* ---- Speaker (I2S) ---- */

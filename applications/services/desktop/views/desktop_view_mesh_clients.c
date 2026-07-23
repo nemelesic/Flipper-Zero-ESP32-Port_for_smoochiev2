@@ -6,14 +6,18 @@
 #include <string.h>
 
 #include "../desktop_i.h" /* STATUS_BAR_Y_SHIFT */
+#include "mesh_view_common.h"
 
 #define LIST_VISIBLE 3
 #define ROW_H        12 /* Zeilenhöhe in der Liste */
-#define NAME_MAX_CHARS 14 /* gekürzt damit "[remove]" rechts passt */
+#define NAME_MAX_CHARS 9 /* gekürzt damit Status/Action rechts passt */
+
+#define STATUS_MAX_CHARS 12
 
 typedef struct {
     MeshPeer peer;
     bool paired;
+    char status[STATUS_MAX_CHARS + 1]; /* nur für gepairte Einträge */
 } MeshClientsRow;
 
 typedef struct {
@@ -22,6 +26,7 @@ typedef struct {
     uint8_t selected;
     uint8_t top; /* Scroll-Offset */
     bool pairing;
+    char overlay[24];
 } MeshClientsModel;
 
 struct DesktopMeshClientsView {
@@ -86,17 +91,25 @@ static void draw_callback(Canvas* canvas, void* model) {
             name_buf[cp] = '\0';
             canvas_draw_str_aligned(canvas, 4, y_text, AlignLeft, AlignCenter, name_buf);
 
-            /* Action rechts */
-            const char* action = m->rows[i].paired ? "[remove]" : "[pair]";
-            canvas_draw_str_aligned(canvas, 124, y_text, AlignRight, AlignCenter, action);
+            /* Rechts: gepairt → Status (Idle/Action-Name), sonst "[pair]". */
+            const char* right;
+            if(m->rows[i].paired) {
+                right = m->rows[i].status[0] ? m->rows[i].status : "Idle";
+            } else {
+                right = "[pair]";
+            }
+            canvas_draw_str_aligned(canvas, 124, y_text, AlignRight, AlignCenter, right);
         }
         canvas_set_color(canvas, ColorBlack);
     }
 
-    /* Footer */
-    canvas_set_font(canvas, FontSecondary);
-    const char* footer = m->pairing ? "Wait for Accept" : "Discovery";
-    canvas_draw_str_aligned(canvas, 64, 60, AlignCenter, AlignBottom, footer);
+    /* Footer: nur während Pairing ("Discovery"-Anzeige im Idle entfernt). */
+    if(m->pairing) {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str_aligned(canvas, 64, 60, AlignCenter, AlignBottom, "Wait for Accept");
+    }
+
+    mesh_view_draw_overlay(canvas, m->overlay);
 }
 
 static bool input_callback(InputEvent* event, void* context) {
@@ -110,29 +123,40 @@ static bool input_callback(InputEvent* event, void* context) {
         v->view,
         MeshClientsModel * m,
         {
-            if(event->type == InputTypeShort || event->type == InputTypeRepeat) {
-                if(event->key == InputKeyUp && m->count > 0) {
-                    if(m->selected == 0) m->selected = m->count - 1;
-                    else m->selected--;
-                    mesh_clients_scroll_to(m, m->selected);
-                    update = true;
-                    consumed = true;
-                } else if(event->key == InputKeyDown && m->count > 0) {
-                    if(m->selected + 1 >= m->count) m->selected = 0;
-                    else m->selected++;
-                    mesh_clients_scroll_to(m, m->selected);
-                    update = true;
-                    consumed = true;
-                } else if(event->key == InputKeyOk && m->count > 0 && !m->pairing) {
-                    fire = m->rows[m->selected].paired ? DesktopMeshClientsEventRemove :
-                                                        DesktopMeshClientsEventPair;
+            bool short_rep = (event->type == InputTypeShort || event->type == InputTypeRepeat);
+            if(short_rep && event->key == InputKeyUp && m->count > 0) {
+                if(m->selected == 0) m->selected = m->count - 1;
+                else m->selected--;
+                mesh_clients_scroll_to(m, m->selected);
+                update = true;
+                consumed = true;
+            } else if(short_rep && event->key == InputKeyDown && m->count > 0) {
+                if(m->selected + 1 >= m->count) m->selected = 0;
+                else m->selected++;
+                mesh_clients_scroll_to(m, m->selected);
+                update = true;
+                consumed = true;
+            } else if(
+                event->type == InputTypeShort && event->key == InputKeyOk && m->count > 0 &&
+                !m->pairing) {
+                /* OK kurz: gepairt → Action-Scene, ungepairt → pairen. */
+                fire = m->rows[m->selected].paired ? DesktopMeshClientsEventOpenAction :
+                                                     DesktopMeshClientsEventPair;
+                should_fire = true;
+                consumed = true;
+            } else if(
+                event->type == InputTypeLong && event->key == InputKeyOk && m->count > 0 &&
+                !m->pairing) {
+                /* OK lang: gepairten Client entfernen. */
+                if(m->rows[m->selected].paired) {
+                    fire = DesktopMeshClientsEventRemove;
                     should_fire = true;
-                    consumed = true;
-                } else if(event->key == InputKeyBack) {
-                    fire = DesktopMeshClientsEventBack;
-                    should_fire = true;
-                    consumed = true;
                 }
+                consumed = true;
+            } else if(event->type == InputTypeShort && event->key == InputKeyBack) {
+                fire = DesktopMeshClientsEventBack;
+                should_fire = true;
+                consumed = true;
             }
         },
         update);
@@ -186,6 +210,7 @@ void desktop_mesh_clients_set_peers(
     DesktopMeshClientsView* v,
     const MeshPeer* peers,
     const bool* paired,
+    const char* const* status,
     size_t count) {
     furi_assert(v);
     if(count > MESH_CLIENTS_MAX) count = MESH_CLIENTS_MAX;
@@ -196,6 +221,9 @@ void desktop_mesh_clients_set_peers(
             for(size_t i = 0; i < count; ++i) {
                 m->rows[i].peer = peers[i];
                 m->rows[i].paired = paired[i];
+                const char* st = (status && status[i]) ? status[i] : "";
+                strncpy(m->rows[i].status, st, STATUS_MAX_CHARS);
+                m->rows[i].status[STATUS_MAX_CHARS] = '\0';
             }
             m->count = (uint8_t)count;
             if(m->selected >= m->count) m->selected = m->count ? m->count - 1 : 0;
@@ -208,6 +236,22 @@ void desktop_mesh_clients_set_pairing(DesktopMeshClientsView* v, bool in_progres
     furi_assert(v);
     with_view_model(
         v->view, MeshClientsModel * m, { m->pairing = in_progress; }, true);
+}
+
+void desktop_mesh_clients_set_overlay(DesktopMeshClientsView* v, const char* text) {
+    furi_assert(v);
+    with_view_model(
+        v->view,
+        MeshClientsModel * m,
+        {
+            if(text) {
+                strncpy(m->overlay, text, sizeof(m->overlay) - 1);
+                m->overlay[sizeof(m->overlay) - 1] = '\0';
+            } else {
+                m->overlay[0] = '\0';
+            }
+        },
+        true);
 }
 
 int desktop_mesh_clients_get_selected_idx(DesktopMeshClientsView* v) {

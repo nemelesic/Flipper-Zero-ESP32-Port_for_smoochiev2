@@ -11,6 +11,10 @@
 #include "views/desktop_view_lock_menu.h"
 #include "views/desktop_view_usb_storage.h"
 #include "views/desktop_view_mesh_clients.h"
+#include "views/desktop_view_mesh_action.h"
+#include "views/desktop_view_mesh_device.h"
+#include "views/desktop_view_mesh_wifi.h"
+#include "views/desktop_view_mesh_handshake.h"
 #include "views/desktop_view_debug.h"
 #include "views/desktop_view_slideshow.h"
 #include "helpers/mesh_config.h"
@@ -35,6 +39,10 @@ typedef enum {
     DesktopViewIdLockMenu,
     DesktopViewIdUsbStorage,
     DesktopViewIdMeshClients,
+    DesktopViewIdMeshAction,
+    DesktopViewIdMeshDevice,
+    DesktopViewIdMeshWifi,
+    DesktopViewIdMeshHandshake,
     DesktopViewIdMeshPair,
     DesktopViewIdLocked,
     DesktopViewIdDebug,
@@ -63,6 +71,10 @@ struct Desktop {
     DesktopLockMenuView* lock_menu;
     DesktopUsbStorageView* usb_storage_view;
     DesktopMeshClientsView* mesh_clients_view;
+    DesktopMeshActionView* mesh_action_view;
+    DesktopMeshDeviceView* mesh_device_view;
+    DesktopMeshWifiView* mesh_wifi_view;
+    DesktopMeshHandshakeView* mesh_handshake_view;
     DesktopDebugView* debug_view;
     DesktopViewLocked* locked_view;
     DesktopMainView* main_view;
@@ -99,13 +111,31 @@ struct Desktop {
     bool app_running;
     bool locked;
 
-    /* Phase-1 Mesh-State. mesh_mode wird beim Boot aus /ext/mesh/mode.txt
-     * geladen und vom Lock-Menü-Toggle aktualisiert. mesh_pending hält die
-     * Daten zum letzten Pair/Disconnect-Event, das der Background-Service ans
-     * Main-Scene-Custom-Event-Handling reicht (single-shot — der Handler
-     * verarbeitet und ignoriert weitere Requests bis er fertig ist). */
-    MeshMode mesh_mode;
+    /* Mesh-State. Der T-Embed ist immer Master (kein Mode mehr). mesh_pending
+     * hält die Daten zum letzten Service-Event, das der Background-Service ans
+     * Custom-Event-Handling reicht (single-shot — der Handler verarbeitet und
+     * ignoriert weitere Requests bis er fertig ist). */
     MeshEventData mesh_pending;
+
+    /* Master: gewählter Client für die Action-Scene; handoff-Flag hält den
+     * Mesh-Service beim Wechsel Clients→Action am Leben. Der laufende Status der
+     * Clients wird NICHT hier gecached — er kommt live vom Buddy. */
+    MeshPeer mesh_action_client;
+    bool mesh_keep_service;
+    /* Vorab bekannte Feature-Liste des gewählten Clients (aus der Clients-Scene),
+     * damit die Action-Scene sofort anzeigt statt erneut auf eine Antwort zu
+     * warten. feature_count==0 = nichts bekannt → Action-Scene fragt selbst ab. */
+    MeshFeature mesh_action_features[MESH_FEATURES_MAX];
+    uint8_t mesh_action_feature_count;
+    uint32_t mesh_action_running_mask;
+    uint8_t mesh_action_channel; /* bekannter Kanal des gewählten Buddys (0 = unbekannt) */
+
+    /* Result-Overlay ("Handshake received"): 3-s-Timer + Dedup gegen wiederholte
+     * Result-Frames (Buddy sendet bis zum Ack erneut). */
+    FuriTimer* mesh_overlay_timer;
+    uint8_t mesh_last_result_mac[MESH_MAC_LEN];
+    uint8_t mesh_last_result_id;
+    bool mesh_last_result_valid;
 };
 
 void desktop_lock(Desktop* desktop);

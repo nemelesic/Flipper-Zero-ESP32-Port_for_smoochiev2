@@ -15,6 +15,7 @@
 #include <esp_netif.h>
 #include <esp_event.h>
 #include <esp_mac.h>
+#include <esp_heap_caps.h>
 
 #define TAG "MeshSvc"
 
@@ -35,11 +36,20 @@
  */
 typedef enum {
     MeshWireDiscoverReq   = 1,
-    MeshWireDiscoverRsp   = 2,
+    MeshWireDiscoverRsp   = 2,  // + caps hinter dem Namen
     MeshWirePairReq       = 3,
-    MeshWirePairRsp       = 4,
+    MeshWirePairRsp       = 4,  // + caps hinter dem Namen
     MeshWireDisconnect    = 5,
     MeshWireDisconnectAck = 6,
+    /* Feature-Steuerung (Erweiterung, vom Buddy implementiert). */
+    MeshWireFeatureQuery  = 7,  // master → buddy : (kein payload)
+    MeshWireFeatureList   = 8,  // buddy  → master: [count][ {id, name} ... ]
+    MeshWireFeatureStart  = 9,  // master → buddy : [id][arg_len][args]
+    MeshWireFeatureStop   = 10, // master → buddy : [id]
+    MeshWireFeatureStatus = 11, // buddy  → master: [id][state][len][data]
+    MeshWirePcapFrame     = 12, // buddy  → master: [seq][frag_idx][frag_cnt][data]
+    MeshWireResult        = 13, // buddy  → master: [id][frag_idx][frag_cnt][chunk] (zuverlässig)
+    MeshWireResultAck     = 14, // master → buddy : [id]
 } MeshWireType;
 
 /* ─────── command queue ─────── */
@@ -47,6 +57,7 @@ typedef enum {
 typedef enum {
     MeshCmdStop = 0,
     MeshCmdSend,
+    MeshCmdSetChannel,
 } MeshCmdKind;
 
 typedef struct {
@@ -54,6 +65,7 @@ typedef struct {
     uint8_t mac[MESH_MAC_LEN]; // 0xff..ff = broadcast
     uint8_t buf[MESH_MAX_PAYLOAD];
     uint8_t len;
+    uint8_t channel; // für MeshCmdSetChannel
 } MeshCmd;
 
 #define MESH_CMD_QLEN 16
@@ -77,6 +89,36 @@ static struct {
 
 static const uint8_t BROADCAST_MAC[MESH_MAC_LEN] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
+/* ─────── Result-Reassembly (zuverlässiger Handshake aus BuddyWireResult) ─────── */
+#define MESH_RESULT_MAX 1400
+
+/* Reassembly-Zustand — nur im WiFi-Task (on_recv_cb) berührt. */
+typedef struct {
+    uint8_t buf[MESH_RESULT_MAX];
+    uint16_t len;
+    uint8_t id;
+    uint8_t next_frag;
+    bool active;
+} ResultAsm;
+
+/* Fertiges Result (Single-Slot) — WiFi-Task schreibt, GUI-Thread liest via
+ * mesh_take_result. Überschreiben-vor-Abholen ist unkritisch: der Buddy sendet
+ * bis zum Ack erneut (self-healing). */
+typedef struct {
+    uint8_t buf[MESH_RESULT_MAX];
+    uint16_t len;
+    uint8_t mac[MESH_MAC_LEN];
+    uint8_t id;
+    bool ready;
+} ResultSlot;
+
+/* Beide Puffer liegen im PSRAM (je 1.4 KB) — sonst würden sie internes DRAM
+ * belegen und die knappe WiFi-Init (esp_wifi_init braucht internes DRAM für die
+ * RX-Buffer) über die Kante kippen. Einmalig lazy in mesh_service_start alloziert. */
+static ResultAsm* s_result_asm = NULL;
+static ResultSlot* s_result = NULL;
+static SemaphoreHandle_t s_result_mtx = NULL;
+
 /* ─────── helpers ─────── */
 
 static const char* mesh_self_name(void) {
@@ -90,7 +132,7 @@ static void mesh_ensure_peer(const uint8_t mac[MESH_MAC_LEN]) {
     if(esp_now_is_peer_exist(mac)) return;
     esp_now_peer_info_t pi = {0};
     memcpy(pi.peer_addr, mac, MESH_MAC_LEN);
-    pi.channel = MESH_CHANNEL;
+    pi.channel = 0; /* 0 = aktueller Radio-Kanal — wir folgen dem Buddy beim Capture */
     pi.ifidx = WIFI_IF_STA;
     pi.encrypt = false;
     esp_err_t err = esp_now_add_peer(&pi);
@@ -114,6 +156,21 @@ static bool unpack_name(const uint8_t* buf, int len, int off, char out[MESH_NAME
     memcpy(out, &buf[off], n);
     out[n] = '\0';
     return true;
+}
+
+/* Offset direkt hinter [name_len][name] ab off; -1 bei Out-of-bounds. */
+static int name_end_off(const uint8_t* buf, int len, int off) {
+    if(off >= len) return -1;
+    uint8_t n = buf[off];
+    if(off + 1 + n > len) return -1;
+    return off + 1 + (int)n;
+}
+
+/* 4-Byte little-endian caps ab off; 0 wenn nicht genug Bytes (alter Client). */
+static uint32_t unpack_caps(const uint8_t* buf, int len, int off) {
+    if(off < 0 || off + 4 > len) return 0;
+    return (uint32_t)buf[off] | ((uint32_t)buf[off + 1] << 8) | ((uint32_t)buf[off + 2] << 16) |
+           ((uint32_t)buf[off + 3] << 24);
 }
 
 static bool mesh_enqueue(const uint8_t mac[MESH_MAC_LEN], const uint8_t* data, uint8_t len) {
@@ -140,6 +197,7 @@ static void on_recv_cb(const esp_now_recv_info_t* info, const uint8_t* data, int
 
     const uint8_t type = data[1];
     const uint8_t* src = info->src_addr;
+    const uint8_t rxch = info->rx_ctrl ? (uint8_t)info->rx_ctrl->channel : 0;
 
     /* Auto-Reply-Pfad und User-Callback-Dispatch nach Type. */
     switch(type) {
@@ -159,7 +217,9 @@ static void on_recv_cb(const esp_now_recv_info_t* info, const uint8_t* data, int
         if(s_svc.role != MeshRoleMaster) return;
         MeshEventData ev = {.type = MeshEventDiscoverResponse};
         memcpy(ev.mac, src, MESH_MAC_LEN);
+        ev.rx_channel = rxch;
         if(!unpack_name(data, len, 2, ev.name)) return;
+        ev.caps = unpack_caps(data, len, name_end_off(data, len, 2));
         if(s_svc.cb) s_svc.cb(&ev, s_svc.cb_ctx);
         return;
     }
@@ -180,7 +240,9 @@ static void on_recv_cb(const esp_now_recv_info_t* info, const uint8_t* data, int
             .accepted = data[2] ? true : false,
         };
         memcpy(ev.mac, src, MESH_MAC_LEN);
+        ev.rx_channel = rxch;
         if(!unpack_name(data, len, 3, ev.name)) return;
+        ev.caps = unpack_caps(data, len, name_end_off(data, len, 3));
         if(s_svc.cb) s_svc.cb(&ev, s_svc.cb_ctx);
         return;
     }
@@ -200,6 +262,100 @@ static void on_recv_cb(const esp_now_recv_info_t* info, const uint8_t* data, int
     case MeshWireDisconnectAck:
         /* Nichts zu tun — Master hatte den Peer schon entfernt. */
         return;
+    case MeshWireFeatureList: {
+        if(s_svc.role != MeshRoleMaster) return;
+        if(len < 3) return;
+        MeshEventData ev = {.type = MeshEventFeatureList};
+        memcpy(ev.mac, src, MESH_MAC_LEN);
+        ev.rx_channel = rxch;
+        uint8_t count = data[2];
+        int off = 3;
+        uint8_t n = 0;
+        for(uint8_t i = 0; i < count && n < MESH_FEATURES_MAX; ++i) {
+            if(off >= len) break;
+            uint8_t id = data[off++];
+            char nm[MESH_NAME_MAX + 1];
+            if(!unpack_name(data, len, off, nm)) break;
+            off = name_end_off(data, len, off);
+            if(off < 0) break;
+            ev.features[n].id = id;
+            strncpy(ev.features[n].name, nm, MESH_FEAT_NAME_MAX);
+            ev.features[n].name[MESH_FEAT_NAME_MAX] = '\0';
+            n++;
+        }
+        ev.feature_count = n;
+        /* running_mask folgt hinter den Einträgen (0 bei altem Buddy). */
+        ev.running_mask = (off >= 0) ? unpack_caps(data, len, off) : 0;
+        if(s_svc.cb) s_svc.cb(&ev, s_svc.cb_ctx);
+        return;
+    }
+    case MeshWireFeatureStatus: {
+        if(s_svc.role != MeshRoleMaster) return;
+        if(len < 5) return;
+        MeshEventData ev = {.type = MeshEventFeatureStatus};
+        memcpy(ev.mac, src, MESH_MAC_LEN);
+        ev.rx_channel = rxch;
+        ev.feat_id = data[2];
+        ev.feat_state = data[3];
+        uint8_t dlen = data[4];
+        if(dlen > MESH_FEAT_DATA_MAX) dlen = MESH_FEAT_DATA_MAX;
+        if(5 + dlen > len) dlen = (uint8_t)(len - 5);
+        memcpy(ev.feat_data, &data[5], dlen);
+        ev.feat_data[dlen] = '\0';
+        ev.feat_data_len = dlen;
+        if(s_svc.cb) s_svc.cb(&ev, s_svc.cb_ctx);
+        return;
+    }
+    case MeshWireResult: {
+        /* Fragmentierter, zuverlässiger Handshake: [id][frag_idx][frag_cnt][chunk].
+         * Reassemblieren; bei Vollständigkeit in den Single-Slot legen + Event. */
+        if(s_svc.role != MeshRoleMaster) return;
+        if(!s_result_asm || !s_result) return; /* PSRAM-Puffer nicht da */
+        if(len < 5) return; /* magic,type,id,frag_idx,frag_cnt */
+        uint8_t id = data[2];
+        uint8_t frag_idx = data[3];
+        uint8_t frag_cnt = data[4];
+        const uint8_t* chunk = &data[5];
+        int chunk_len = len - 5;
+        if(frag_cnt == 0) return;
+
+        if(frag_idx == 0) {
+            s_result_asm->active = true;
+            s_result_asm->id = id;
+            s_result_asm->next_frag = 0;
+            s_result_asm->len = 0;
+        }
+        if(!s_result_asm->active || s_result_asm->id != id || s_result_asm->next_frag != frag_idx) {
+            s_result_asm->active = false;
+            return;
+        }
+        if(s_result_asm->len + chunk_len > MESH_RESULT_MAX) {
+            s_result_asm->active = false;
+            return;
+        }
+        memcpy(&s_result_asm->buf[s_result_asm->len], chunk, chunk_len);
+        s_result_asm->len += (uint16_t)chunk_len;
+        s_result_asm->next_frag++;
+
+        if(s_result_asm->next_frag >= frag_cnt) {
+            s_result_asm->active = false;
+            /* In den Single-Slot übergeben (GUI-Thread holt via mesh_take_result). */
+            if(s_result_mtx) xSemaphoreTake(s_result_mtx, portMAX_DELAY);
+            memcpy(s_result->buf, s_result_asm->buf, s_result_asm->len);
+            s_result->len = s_result_asm->len;
+            memcpy(s_result->mac, src, MESH_MAC_LEN);
+            s_result->id = id;
+            s_result->ready = true;
+            if(s_result_mtx) xSemaphoreGive(s_result_mtx);
+
+            MeshEventData ev = {.type = MeshEventResult};
+            memcpy(ev.mac, src, MESH_MAC_LEN);
+            ev.rx_channel = rxch;
+            ev.result_id = id;
+            if(s_svc.cb) s_svc.cb(&ev, s_svc.cb_ctx);
+        }
+        return;
+    }
     default:
         return;
     }
@@ -300,6 +456,13 @@ static void worker_task(void* arg) {
             mesh_ensure_peer(c.mac);
             esp_err_t e = esp_now_send(c.mac, c.buf, c.len);
             if(e != ESP_OK) FURI_LOG_W(TAG, "esp_now_send: %s", esp_err_to_name(e));
+        } else if(c.kind == MeshCmdSetChannel) {
+            /* Kurz warten, damit ein direkt davor gequeuetes Send (z.B.
+             * FeatureStart/Stop) noch auf dem alten Kanal rausgeht, bevor wir
+             * den Radio-Kanal umstellen (dem Buddy hinterher beim Capture). */
+            vTaskDelay(pdMS_TO_TICKS(60));
+            esp_err_t ce = esp_wifi_set_channel(c.channel, WIFI_SECOND_CHAN_NONE);
+            FURI_LOG_I(TAG, "channel -> %u (%s)", c.channel, esp_err_to_name(ce));
         }
     }
 
@@ -342,6 +505,19 @@ bool mesh_service_start(MeshRole role, MeshEventCallback cb, void* ctx) {
     s_svc.cmd_q = xQueueCreate(MESH_CMD_QLEN, sizeof(MeshCmd));
     s_svc.ready_sem = xSemaphoreCreateBinary();
     s_svc.done_sem = xSemaphoreCreateBinary();
+    if(!s_result_mtx) s_result_mtx = xSemaphoreCreateMutex();
+    /* Result-Puffer im PSRAM (nicht internes DRAM — sonst NO_MEM bei esp_wifi_init);
+     * Fallback auf internes DRAM für Boards ohne PSRAM. */
+    if(!s_result_asm) {
+        s_result_asm = heap_caps_calloc(1, sizeof(ResultAsm), MALLOC_CAP_SPIRAM);
+        if(!s_result_asm) s_result_asm = calloc(1, sizeof(ResultAsm));
+    }
+    if(!s_result) {
+        s_result = heap_caps_calloc(1, sizeof(ResultSlot), MALLOC_CAP_SPIRAM);
+        if(!s_result) s_result = calloc(1, sizeof(ResultSlot));
+    }
+    if(s_result_asm) s_result_asm->active = false;
+    if(s_result) s_result->ready = false;
     s_svc.active = true;
 
     BaseType_t ok = xTaskCreate(worker_task, "mesh_svc", 4096, NULL, 5, &s_svc.worker);
@@ -434,4 +610,67 @@ bool mesh_send_disconnect(const uint8_t to[MESH_MAC_LEN]) {
     if(s_svc.role != MeshRoleMaster) return false;
     uint8_t out[2] = {MESH_MAGIC, MeshWireDisconnect};
     return mesh_enqueue(to, out, sizeof(out));
+}
+
+bool mesh_send_feature_query(const uint8_t to[MESH_MAC_LEN]) {
+    if(s_svc.role != MeshRoleMaster) return false;
+    uint8_t out[2] = {MESH_MAGIC, MeshWireFeatureQuery};
+    return mesh_enqueue(to, out, sizeof(out));
+}
+
+bool mesh_send_feature_start(
+    const uint8_t to[MESH_MAC_LEN],
+    uint8_t feat_id,
+    const uint8_t* args,
+    uint8_t arg_len) {
+    if(s_svc.role != MeshRoleMaster) return false;
+    if((int)arg_len > MESH_MAX_PAYLOAD - 4) arg_len = MESH_MAX_PAYLOAD - 4;
+    uint8_t out[MESH_MAX_PAYLOAD];
+    out[0] = MESH_MAGIC;
+    out[1] = MeshWireFeatureStart;
+    out[2] = feat_id;
+    out[3] = arg_len;
+    if(args && arg_len) memcpy(&out[4], args, arg_len);
+    return mesh_enqueue(to, out, 4 + arg_len);
+}
+
+bool mesh_send_feature_stop(const uint8_t to[MESH_MAC_LEN], uint8_t feat_id) {
+    if(s_svc.role != MeshRoleMaster) return false;
+    uint8_t out[3] = {MESH_MAGIC, MeshWireFeatureStop, feat_id};
+    return mesh_enqueue(to, out, sizeof(out));
+}
+
+bool mesh_send_result_ack(const uint8_t to[MESH_MAC_LEN], uint8_t result_id) {
+    if(s_svc.role != MeshRoleMaster) return false;
+    uint8_t out[3] = {MESH_MAGIC, MeshWireResultAck, result_id};
+    return mesh_enqueue(to, out, sizeof(out));
+}
+
+bool mesh_take_result(
+    uint8_t out_mac[MESH_MAC_LEN],
+    uint8_t* out_id,
+    uint8_t* buf,
+    uint16_t buf_cap,
+    uint16_t* out_len) {
+    if(!s_result_mtx || !s_result) return false;
+    bool got = false;
+    xSemaphoreTake(s_result_mtx, portMAX_DELAY);
+    if(s_result->ready) {
+        uint16_t n = s_result->len;
+        if(n > buf_cap) n = buf_cap;
+        memcpy(buf, s_result->buf, n);
+        if(out_len) *out_len = n;
+        if(out_mac) memcpy(out_mac, s_result->mac, MESH_MAC_LEN);
+        if(out_id) *out_id = s_result->id;
+        s_result->ready = false;
+        got = true;
+    }
+    xSemaphoreGive(s_result_mtx);
+    return got;
+}
+
+void mesh_service_set_channel(uint8_t channel) {
+    if(!s_svc.active || !s_svc.cmd_q) return;
+    MeshCmd c = {.kind = MeshCmdSetChannel, .channel = channel};
+    xQueueSend(s_svc.cmd_q, &c, pdMS_TO_TICKS(50));
 }

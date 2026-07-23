@@ -41,12 +41,31 @@ typedef enum {
     DesktopLockMenuEventUsbStorage,
     DesktopLockMenuEventBluetoothToggle,
     DesktopLockMenuEventBruce,
-    DesktopLockMenuEventMeshModeToggle,
     DesktopLockMenuEventMeshClients,
 
     DesktopMeshClientsEventPair,
     DesktopMeshClientsEventRemove,
+    DesktopMeshClientsEventOpenAction, /* OK kurz auf gepairtem Client → Client-Menü */
     DesktopMeshClientsEventBack,
+
+    /* Client-Menü (mesh_action): Kategorie wählen. */
+    DesktopMeshActionEventDevice, /* OK auf "Device" → Device-Scene */
+    DesktopMeshActionEventWifi,   /* OK auf "Wifi"   → Wifi-Scene   */
+    DesktopMeshActionEventBack,
+
+    /* Device-Scene: Identify start/stop + Disconnect. */
+    DesktopMeshDeviceEventIdentifyStart,
+    DesktopMeshDeviceEventIdentifyStop,
+    DesktopMeshDeviceEventDisconnect,
+    DesktopMeshDeviceEventBack,
+
+    /* Wifi-Scene: Capture-Handshake öffnen. */
+    DesktopMeshWifiEventCaptureHs,
+    DesktopMeshWifiEventBack,
+
+    /* Handshake-Scene: Start/Stop-Button. */
+    DesktopMeshHandshakeEventToggle,
+    DesktopMeshHandshakeEventBack,
 
     DesktopUsbStorageEventExit,
 
@@ -58,6 +77,10 @@ typedef enum {
     DesktopMeshEventClientDisconnect,     /* Main-Scene  (Client) */
     DesktopMeshEventMasterDiscoverRsp,    /* Mesh-Clients-Scene (Master) */
     DesktopMeshEventMasterPairRsp,        /* Mesh-Clients-Scene (Master) */
+    DesktopMeshEventMasterFeatureList,    /* Mesh-Action-Scene (Master) */
+    DesktopMeshEventMasterFeatureStatus,  /* global + Mesh-Action-Scene (Master) */
+    DesktopMeshEventMasterResult,         /* global: Result vom Buddy → Overlay + Ack */
+    DesktopMeshEventOverlayExpire,        /* global: Overlay-Timer abgelaufen → ausblenden */
 
     DesktopAnimationEventCheckAnimation,
     DesktopAnimationEventNewIdleAnimation,
